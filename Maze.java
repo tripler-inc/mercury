@@ -123,8 +123,8 @@ public class Maze {
             int mazeWidth = currentMaze[0].length * 28; // cellSize from MazePanel
             int mazeHeight = currentMaze.length * 28;
             Insets insets = frame.getInsets();
-            int frameWidth = mazeWidth * 2 + insets.left + insets.right;
-            int frameHeight = mazeHeight + bottom.getPreferredSize().height + insets.top + insets.bottom;
+            int frameWidth = (int)((mazeWidth * 2 + insets.left + insets.right) * 1.2);
+            int frameHeight = (int)((mazeHeight + bottom.getPreferredSize().height + insets.top + insets.bottom) * 1.3);
             frame.setSize(frameWidth, frameHeight);
             frame.setLocationRelativeTo(null);
             frame.setVisible(true);
