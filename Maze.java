@@ -46,7 +46,7 @@ public class Maze {
     // Maze generation options
     static int mazeRowsDefault = 21;
     static int mazeColsDefault = 21;
-    static boolean allowLoops = true; // whether to allow loops in generated maze
+    static boolean allowLoops = false; // whether to allow loops in generated maze
     static double loopChance = 0.05; // chance to remove a wall and create a loop
 
     public static void main(String[] args) {
@@ -412,7 +412,7 @@ public class Maze {
             int h = getHeight();
 
             // sky / ceiling (extended to top)
-            g.setColor(new Color(100, 160, 255));
+            g.setColor(Color.WHITE);
             g.fillRect(0, 0, w, h/2);
             // floor
             g.setColor(new Color(150, 120, 80));
@@ -421,11 +421,48 @@ public class Maze {
             // simple slice-based corridor rendering
             int viewDepth = 8;
             int centerX = w/2;
-            int centerY = h/2;
             
             // Check for immediate walls (at player position)
             boolean immediateLeftWall = isWallAt(maze, 0, 1);
             boolean immediateRightWall = isWallAt(maze, 0, -1);
+            
+            // Draw immediate doorways if they exist
+            if (!immediateLeftWall) {
+                // immediate left doorway - fill from screen edge to first slice
+                int firstLeft = (int) (centerX - (w/2) * 1.0 * 0.7);
+                int firstTop = (int) (h * 0.15);
+                int firstBottom = h - firstTop;
+                g.setColor(new Color(40, 40, 40));
+                g.fillPolygon(new Polygon(new int[]{0, firstLeft, firstLeft, 0}, new int[]{0, firstTop, firstBottom, h}, 4));
+                // Fill top triangle with white (ceiling color)
+                g.setColor(Color.WHITE);
+                g.fillPolygon(new Polygon(new int[]{0, firstLeft, 0}, new int[]{0, firstTop, firstTop}, 3));
+                // Fill bottom triangle with floor color
+                g.setColor(new Color(150, 120, 80));
+                g.fillPolygon(new Polygon(new int[]{0, firstLeft, 0}, new int[]{h, firstBottom, firstBottom}, 3));
+                // Draw lines showing the side hallway
+                g.setColor(Color.BLACK);
+                g.drawLine(firstLeft, firstTop, 0, firstTop);
+                g.drawLine(firstLeft, firstBottom, 0, firstBottom);
+            }
+            if (!immediateRightWall) {
+                // immediate right doorway - fill from first slice to screen edge
+                int firstRight = (int) (centerX + (w/2) * 1.0 * 0.7);
+                int firstTop = (int) (h * 0.15);
+                int firstBottom = h - firstTop;
+                g.setColor(new Color(40, 40, 40));
+                g.fillPolygon(new Polygon(new int[]{firstRight, w, w, firstRight}, new int[]{firstTop, 0, h, firstBottom}, 4));
+                // Fill top triangle with white (ceiling color)
+                g.setColor(Color.WHITE);
+                g.fillPolygon(new Polygon(new int[]{firstRight, w, w}, new int[]{firstTop, 0, firstTop}, 3));
+                // Fill bottom triangle with floor color
+                g.setColor(new Color(150, 120, 80));
+                g.fillPolygon(new Polygon(new int[]{firstRight, w, w}, new int[]{firstBottom, h, firstBottom}, 3));
+                // Draw lines showing the side hallway
+                g.setColor(Color.BLACK);
+                g.drawLine(firstRight, firstTop, w, firstTop);
+                g.drawLine(firstRight, firstBottom, w, firstBottom);
+            }
             
             for (int dist = 1; dist <= viewDepth; dist++) {
                 double scale = 1.0 - (double)(dist-1) / (viewDepth + 2);
@@ -454,10 +491,19 @@ public class Maze {
                 int checkC = (int)Math.round(baseC + dir[1] * dist);
                 boolean frontIsExit = (checkR >= 0 && checkR < maze.length && checkC >= 0 && checkC < maze[0].length && maze[checkR][checkC] == 'E');
 
-                // draw opening slice (dark grey)
+                // draw opening slice - split into ceiling (white) and floor (dark grey)
+                int mid = (top + bottom) / 2;
+                int midNext = (topNext + bottomNext) / 2;
+                
+                // ceiling (top half)
+                g.setColor(Color.WHITE);
+                Polygon ceiling = new Polygon(new int[] {left, right, rightNext, leftNext}, new int[] {top, top, topNext, topNext}, 4);
+                g.fillPolygon(ceiling);
+                
+                // floor (bottom half)
                 g.setColor(new Color(40, 40, 40));
-                Polygon opening = new Polygon(new int[] {left, right, rightNext, leftNext}, new int[] {top, top, topNext, topNext}, 4);
-                g.fillPolygon(opening);
+                Polygon floor = new Polygon(new int[] {left, right, rightNext, leftNext}, new int[] {mid, mid, midNext, midNext}, 4);
+                g.fillPolygon(floor);
 
                 // For first slice, draw immediate walls from screen edge if they exist
                 if (dist == 1) {
@@ -491,6 +537,26 @@ public class Maze {
                     );
                     g.setColor(new Color(80, 80, 80));
                     g.fillPolygon(leftWallPoly);
+                } else {
+                    // doorway on left - draw dark grey opening
+                    Polygon leftDoorway = new Polygon(
+                        new int[]{left, left, leftNext, leftNext}, 
+                        new int[]{top, bottom, bottomNext, topNext}, 
+                        4
+                    );
+                    g.setColor(new Color(40, 40, 40));
+                    g.fillPolygon(leftDoorway);
+                    // Fill top triangle with white (ceiling color)
+                    g.setColor(Color.WHITE);
+                    g.fillPolygon(new Polygon(new int[]{left, leftNext, left}, new int[]{topNext, topNext, top}, 3));
+                    // Fill bottom triangle with floor color
+                    g.setColor(new Color(150, 120, 80));
+                    g.fillPolygon(new Polygon(new int[]{left, leftNext, left}, new int[]{bottomNext, bottomNext, bottom}, 3));
+                    // Draw lines showing the side hallway ceiling/wall joint
+                    g.setColor(Color.BLACK);
+                    // Stop at current slice's near edge (where closer wall would block view)
+                    g.drawLine(leftNext, topNext, left, topNext);  // top - horizontal
+                    g.drawLine(leftNext, bottomNext, left, bottomNext);  // bottom
                 }
                 
                 // draw right wall as solid trapezoid if wall exists
@@ -503,8 +569,28 @@ public class Maze {
                     );
                     g.setColor(new Color(80, 80, 80));
                     g.fillPolygon(rightWallPoly);
+                } else {
+                    // doorway on right - draw dark grey opening
+                    Polygon rightDoorway = new Polygon(
+                        new int[]{right, right, rightNext, rightNext}, 
+                        new int[]{top, bottom, bottomNext, topNext}, 
+                        4
+                    );
+                    g.setColor(new Color(40, 40, 40));
+                    g.fillPolygon(rightDoorway);
+                    // Fill top triangle with white (ceiling color)
+                    g.setColor(Color.WHITE);
+                    g.fillPolygon(new Polygon(new int[]{right, rightNext, right}, new int[]{topNext, topNext, top}, 3));
+                    // Fill bottom triangle with floor color
+                    g.setColor(new Color(150, 120, 80));
+                    g.fillPolygon(new Polygon(new int[]{right, rightNext, right}, new int[]{bottomNext, bottomNext, bottom}, 3));
+                    // Draw lines showing the side hallway ceiling/wall joint
+                    g.setColor(Color.BLACK);
+                    // Stop at current slice's near edge (where closer wall would block view)
+                    g.drawLine(rightNext, topNext, right, topNext);  // top - horizontal
+                    g.drawLine(rightNext, bottomNext, right, bottomNext);  // bottom
                 }
-
+                
                 // if front blocked or exit, draw a wall across the opening and stop deeper drawing
                 if (frontBlock || frontIsExit) {
                     Polygon front = new Polygon(new int[]{leftNext, rightNext, rightNext, leftNext}, new int[]{topNext, topNext, bottomNext, bottomNext}, 4);
@@ -529,16 +615,6 @@ public class Maze {
                     }
                     
                     break;
-                }
-
-                // floor texture lines
-                g.setColor(new Color(100, 70, 50, 80));
-                int lines = 3;
-                for (int i = 0; i < lines; i++) {
-                    int y = top + (bottom - top) * (i+1) / (lines+1);
-                    int x1 = (int)(left + (leftNext - left) * (double)(i+1)/(lines+1));
-                    int x2 = (int)(right + (rightNext - right) * (double)(i+1)/(lines+1));
-                    g.drawLine(x1, y, x2, y);
                 }
             }
 
@@ -669,11 +745,13 @@ public class Maze {
         // clear old position unless it is the exit
         if (maze[animFromI][animFromJ] != 'E') maze[animFromI][animFromJ] = ' ';
         posI = animToI; posJ = animToJ;
+        // Check if we reached the exit BEFORE overwriting the cell
+        boolean reachedExit = solveMaze(maze, posI, posJ);
         if (maze[posI][posJ] != 'E') maze[posI][posJ] = 'O';
         view3d.repaint(); topdown.repaint();
         // record step
         path.add(posI + "," + posJ);
-        if (solveMaze(maze, posI, posJ)) {
+        if (reachedExit) {
             SwingUtilities.invokeLater(() -> {
                 view3d.repaint(); topdown.repaint();
                 JOptionPane.showMessageDialog(frame, "Exit found!");
