@@ -24,6 +24,7 @@ public class Maze {
     static JFrame frame;
     static boolean use3D = true; // default to 3D view
     static boolean showMiniMap = false; // default to showing minimap
+    static boolean showStartText = true; // show "Press Start" overlay
     static boolean debug = false; // debug mode for console output
     static volatile boolean acceptingInput = false;
     // Track keys currently pressed to debounce auto-repeat
@@ -41,6 +42,21 @@ public class Maze {
         double t = (double)(System.currentTimeMillis() - animStartTime) / (double)animDurationMs;
         if (t < 0.0) return 0.0;
         return Math.min(1.0, t);
+    }
+
+    // Draw "Press Start" overlay on any panel
+    static void drawStartOverlay(Graphics2D g, int width, int height) {
+        if (!showStartText) return;
+        g.setColor(new Color(0, 0, 0, 180)); // semi-transparent black
+        g.fillRect(0, 0, width, height);
+        g.setColor(Color.WHITE);
+        Font font = new Font("SansSerif", Font.BOLD, 48);
+        g.setFont(font);
+        String text = "Press Start";
+        FontMetrics fm = g.getFontMetrics();
+        int textWidth = fm.stringWidth(text);
+        int textHeight = fm.getHeight();
+        g.drawString(text, (width - textWidth) / 2, (height - textHeight) / 2 + fm.getAscent());
     }
 
     // Maze generation options
@@ -75,8 +91,11 @@ public class Maze {
             JButton startBtn = new JButton("Start");
             startBtn.addActionListener(e -> {
                 acceptingInput = true;
+                showStartText = false;
                 startBtn.setEnabled(false);
                 frame.requestFocusInWindow();
+                view3d.repaint();
+                topdown.repaint();
             });
             bottom.add(startBtn);
 
@@ -568,7 +587,8 @@ public class Maze {
                 
                 // if front blocked or exit, draw a wall across the opening and stop deeper drawing
                 if (frontBlock || frontIsExit) {
-                    Polygon front = new Polygon(new int[]{leftNext, rightNext, rightNext, leftNext}, new int[]{topNext, topNext, bottomNext, bottomNext}, 4);
+                    // Use current slice dimensions to fill the opening completely
+                    Polygon front = new Polygon(new int[]{left, right, right, left}, new int[]{top, top, bottom, bottom}, 4);
                     g.setColor(new Color(40, 40, 40));
                     g.fillPolygon(front);
                     
@@ -577,14 +597,14 @@ public class Maze {
                         // Draw "Exit" text on the wall
                         g.setColor(Color.RED);
                         Font oldFont = g.getFont();
-                        int fontSize = (int)((rightNext - leftNext) * 0.4);
+                        int fontSize = (int)((right - left) * 0.4);
                         g.setFont(new Font("SansSerif", Font.BOLD, Math.max(12, fontSize)));
                         String exitText = "Exit";
                         FontMetrics fm = g.getFontMetrics();
                         int textWidth = fm.stringWidth(exitText);
                         int textHeight = fm.getAscent();
-                        int textX = (leftNext + rightNext) / 2 - textWidth / 2;
-                        int textY = (topNext + bottomNext) / 2 + textHeight / 2;
+                        int textX = (left + right) / 2 - textWidth / 2;
+                        int textY = (top + bottom) / 2 + textHeight / 2;
                         g.drawString(exitText, textX, textY);
                         g.setFont(oldFont);
                     }
@@ -622,6 +642,10 @@ public class Maze {
                 int by = ay + directions[facing][0]*miniMapCell;
                 g.drawLine(ax, ay, bx, by);
             }
+            
+            // draw "Press Start" text overlay
+            drawStartOverlay(g, w, h);
+            
             g.dispose();
         }
 
@@ -800,6 +824,11 @@ public class Maze {
             int bx = ax + directions[facing][1]*cellSize;
             int by = ay + directions[facing][0]*cellSize;
             g.drawLine(ax, ay, bx, by);
+
+            // draw "Press Start" text overlay
+            int w = getWidth();
+            int h = getHeight();
+            drawStartOverlay(g, w, h);
 
             g.dispose();
         }
