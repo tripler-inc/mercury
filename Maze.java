@@ -532,13 +532,14 @@ public class Maze {
                     g.setColor(new Color(80, 80, 80));
                     g.fillPolygon(leftWallPoly);
                 } else {
-                    // doorway on left - draw dark grey opening
+                    // doorway on left - draw dark grey opening with subtle distance-based shading
                     Polygon leftDoorway = new Polygon(
                         new int[]{left, left, leftNext, leftNext}, 
                         new int[]{top, bottom, bottomNext, topNext}, 
                         4
                     );
-                    g.setColor(new Color(40, 40, 40));
+                    int shadeL = (int)Math.max(20, Math.round(40 - 20.0 * ((double)dist / viewDepth)));
+                    g.setColor(new Color(shadeL, shadeL, shadeL));
                     g.fillPolygon(leftDoorway);
                     // Fill top triangle with white (ceiling color)
                     g.setColor(Color.WHITE);
@@ -564,13 +565,14 @@ public class Maze {
                     g.setColor(new Color(80, 80, 80));
                     g.fillPolygon(rightWallPoly);
                 } else {
-                    // doorway on right - draw dark grey opening
+                    // doorway on right - draw dark grey opening with subtle distance-based shading
                     Polygon rightDoorway = new Polygon(
                         new int[]{right, right, rightNext, rightNext}, 
                         new int[]{top, bottom, bottomNext, topNext}, 
                         4
                     );
-                    g.setColor(new Color(40, 40, 40));
+                    int shadeR = (int)Math.max(20, Math.round(40 - 20.0 * ((double)dist / viewDepth)));
+                    g.setColor(new Color(shadeR, shadeR, shadeR));
                     g.fillPolygon(rightDoorway);
                     // Fill top triangle with white (ceiling color)
                     g.setColor(Color.WHITE);
@@ -589,7 +591,11 @@ public class Maze {
                 if (frontBlock || frontIsExit) {
                     // Use current slice dimensions to fill the opening completely
                     Polygon front = new Polygon(new int[]{left, right, right, left}, new int[]{top, top, bottom, bottom}, 4);
-                    g.setColor(new Color(40, 40, 40));
+                    // Shade front wall to visually match doorway shade at the same perceived slice
+                    // Doorways at this loop index effectively appear one slice nearer than the front wall
+                    int effectiveDist = Math.max(0, dist - 1);
+                    int shadeFront = (int)Math.max(20, Math.round(40 - 20.0 * ((double)effectiveDist / viewDepth)));
+                    g.setColor(new Color(shadeFront, shadeFront, shadeFront));
                     g.fillPolygon(front);
                     
                     // If this is the exit, draw "Exit" text on the wall
