@@ -665,16 +665,16 @@ public class Maze {
         }
     }
 
-    // Move forward in the current facing direction if not blocked
-    static boolean moveForward(char[][] maze) {
+    // Consolidated move method: step = +1 forward, -1 backward
+    static boolean move(char[][] maze, int step) {
         if (animating) {
-            if (debug) System.out.println("moveForward ignored: already animating");
+            if (debug) System.out.println("move ignored: already animating");
             return false; // ignore inputs while animating
         }
         int[] dir = directions[facing];
-        int ni = posI + dir[0];
-        int nj = posJ + dir[1];
-        if (debug) System.out.println("Attempt moveForward: from=" + posI + "," + posJ + " facing=" + facing + " target=" + ni + "," + nj);
+        int ni = posI + dir[0] * step;
+        int nj = posJ + dir[1] * step;
+        if (debug) System.out.println("Attempt move" + (step > 0 ? "Forward" : "Backward") + ": from=" + posI + "," + posJ + " facing=" + facing + " target=" + ni + "," + nj);
         if (ni < 0 || ni >= maze.length || nj < 0 || nj >= maze[0].length) {
             return false;
         }
@@ -692,7 +692,8 @@ public class Maze {
                 if (t >= 1.0) {
                     animTimer.stop();
                     animating = false;
-                    finalizeMove(maze);
+                    // Use currentMaze to avoid stale captured references after regeneration
+                    finalizeMove(currentMaze);
                 } else {
                     view3d.repaint(); topdown.repaint();
                 }
@@ -703,41 +704,14 @@ public class Maze {
         return true;
     }
 
+    // Move forward in the current facing direction if not blocked
+    static boolean moveForward(char[][] maze) {
+        return move(maze, 1);
+    }
+
     // Move backward (step opposite of facing) if not blocked
     static boolean moveBackward(char[][] maze) {
-        if (animating) {
-            if (debug) System.out.println("moveBackward ignored: already animating");
-            return false; // ignore inputs while animating
-        }
-        int[] dir = directions[facing];
-        int ni = posI - dir[0];
-        int nj = posJ - dir[1];
-        if (debug) System.out.println("Attempt moveBackward: from=" + posI + "," + posJ + " facing=" + facing + " target=" + ni + "," + nj);
-        if (ni < 0 || ni >= maze.length || nj < 0 || nj >= maze[0].length) {
-            return false;
-        }
-        if (maze[ni][nj] == '#') {
-            return false;
-        }
-        animFromI = posI; animFromJ = posJ; animToI = ni; animToJ = nj;
-        animStartTime = System.currentTimeMillis();
-        animating = true;
-        if (animTimer == null) {
-            animTimer = new javax.swing.Timer(16, ev -> {
-                long now = System.currentTimeMillis();
-                double t = (double)(now - animStartTime) / animDurationMs;
-                if (t >= 1.0) {
-                    animTimer.stop();
-                    animating = false;
-                    finalizeMove(maze);
-                } else {
-                    view3d.repaint(); topdown.repaint();
-                }
-            });
-            animTimer.setRepeats(true);
-        }
-        animTimer.start();
-        return true;
+        return move(maze, -1);
     }
 
     static void finalizeMove(char[][] maze) {
