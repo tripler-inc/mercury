@@ -71,9 +71,6 @@ public class Maze {
             frame.add(use3D ? view3d : topdown, BorderLayout.CENTER);
 
             JPanel bottom = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            JButton focusBtn = new JButton("Click to Focus (or press Tab)");
-            focusBtn.addActionListener(e -> frame.requestFocusInWindow());
-            bottom.add(focusBtn);
 
             JButton startBtn = new JButton("Start");
             startBtn.addActionListener(e -> {
@@ -365,28 +362,6 @@ public class Maze {
         return grid;
     }
 
-    // Clear the console using ANSI escape codes when available, otherwise fall back to newlines
-    static void clearConsole() {
-        final String ESC = "\u001b"; // ASCII escape
-        try {
-            // ANSI clear screen + move cursor to home
-            System.out.print(ESC + "[2J" + ESC + "[H");
-            System.out.flush();
-        } catch (Exception e) {
-            // Fallback: print some newlines
-            for (int i = 0; i < 50; i++) System.out.println();
-        }
-    }
-
-    static void printMaze(char[][] maze) {
-        for (int i = 0; i < maze.length; i++) {
-            for (int j = 0; j < maze[i].length; j++) {
-                System.out.print(maze[i][j]);
-            }
-            System.out.println();
-        }
-    }
-
     // 3D first-person view panel
     static class View3DPanel extends JPanel {
         private char[][] maze;
@@ -419,7 +394,7 @@ public class Maze {
             g.fillRect(0, h/2, w, h/2);
 
             // simple slice-based corridor rendering
-            int viewDepth = 8;
+            int viewDepth = 10;
             int centerX = w/2;
             
             // Check for immediate walls (at player position)
@@ -465,8 +440,8 @@ public class Maze {
             }
             
             for (int dist = 1; dist <= viewDepth; dist++) {
-                double scale = 1.0 - (double)(dist-1) / (viewDepth + 2);
-                double nextScale = 1.0 - (double)dist / (viewDepth + 2);
+                double scale = 1.0 - (double)(dist-1) / viewDepth;
+                double nextScale = 1.0 - (double)dist / viewDepth;
 
                 int left = (int) (centerX - (w/2) * scale * 0.7);
                 int right = (int) (centerX + (w/2) * scale * 0.7);
