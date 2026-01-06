@@ -1,5 +1,7 @@
 "# mercury"
 
 The Maze app was an experiment using Visual Studio Code and the AI agents to generate a java application without writing code myself.  It was my first time using AI for coding.  It was interesting seeing the various AI agents thinking about what I requested.  I noted that some of the agents did not correctly understand my request and actually did the exact opposite.  A few times, I had to tell it that what it did was wrong and then clarify my request using its own words from its thinking.  It usually said "Ah, I see what I did wrong" and corrected it.  Sometimes it did it wrong again, which started to get frustrating.
-The "final" version works parfectly, but some tweaks could be done manually.  Such as, changing how the wall segment in front of the player is rendered, and how it renders the corridor ahead when it goes too far to see (it is currently a stretched line, when really it should be a single point).  The side wall segments don't quite look right, either.  Farther away wall segments should be narrower in addition to shorter.  Explaining these issues to the AI proved to be difficult.
+
+The "final" version works perfectly, but some tweaks could be done manually, such as changing how the wall segment in front of the player is rendered, and how it renders the corridor ahead when it goes too far to see (it is currently a stretched line, when really it should be a single point).  The side wall segments don't quite look right, either.  Farther away wall segments should be narrower in addition to shorter.  Explaining these issues to the AI proved to be difficult.
+
 I also used the AI to do all of the repository pushes and pulls, and the documentation (markdown file).  I think it did a pretty good job.
