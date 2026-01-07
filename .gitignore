@@ -1,0 +1,32 @@
+# Java build artifacts
+*.class
+*.jar
+*.war
+*.ear
+
+# Build output directories
+/bin/
+/out/
+/target/
+/build/
+
+# IDE/editor metadata
+*.iml
+.idea/
+.project
+.classpath
+.settings/
+.vscode/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Local runtime artifacts
+maze_path.txt
+backups/Maze_backup_*.zip
+
+# Logs and crash dumps
+*.log
+hs_err_pid*
+replay_pid*
