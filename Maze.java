@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import javax.sound.sampled.*;
 
 public class Maze {
     static int posI = 9; // Starting I position
@@ -36,6 +37,10 @@ public class Maze {
     static long animStartTime = 0L;
     static int animDurationMs = 160; // animation duration in ms
     static javax.swing.Timer animTimer = null;
+    
+    // Key mechanics
+    static int keyI = -1, keyJ = -1; // key position (not stored in maze grid)
+    static boolean hasKey = false;   // whether player is holding the key
 
     static double getAnimationProgress() {
         if (!animating) return 0.0;
@@ -63,9 +68,10 @@ public class Maze {
     static int mazeRowsDefault = 21;
     static int mazeColsDefault = 21;
     static boolean allowLoops = false; // whether to allow loops in generated maze
-    static double loopChance = 0.05; // chance to remove a wall and create a loop
+    static double loopChance = 0.02; // chance to remove a wall and create a loop
 
     public static void main(String[] args) {
+
         // generate a random maze (may include loops when allowLoops is true)
         currentMaze = generateMaze(mazeRowsDefault, mazeColsDefault, allowLoops, loopChance);
 
@@ -135,6 +141,7 @@ public class Maze {
             frame.add(bottom, BorderLayout.SOUTH);
 
             frame.pack();
+
             // initialize window to fit top-down view completely
             int mazeWidth = currentMaze[0].length * 28; // cellSize from MazePanel
             int mazeHeight = currentMaze.length * 28;
@@ -165,6 +172,7 @@ public class Maze {
 
     static void handleKey(KeyEvent e, char[][] maze) {
         int k = e.getKeyCode();
+
         // ignore input until user clicks Start (or presses Enter)
         if (!acceptingInput) {
             if (k == KeyEvent.VK_ENTER) {
@@ -176,6 +184,7 @@ public class Maze {
         }
         boolean moved = false;
         if (k == KeyEvent.VK_LEFT || k == KeyEvent.VK_A) {
+
             // rotate counter-clockwise
             if (animating) {
                 if (debug) System.out.println("Rotation ignored during movement");
@@ -184,6 +193,7 @@ public class Maze {
                 view3d.repaint(); topdown.repaint();
             }
         } else if (k == KeyEvent.VK_RIGHT || k == KeyEvent.VK_D) {
+
             // rotate clockwise
             if (animating) {
                 if (debug) System.out.println("Rotation ignored during movement");
@@ -196,16 +206,19 @@ public class Maze {
         } else if (k == KeyEvent.VK_DOWN || k == KeyEvent.VK_S) {
             moved = moveBackward(maze);
         } else if (k == KeyEvent.VK_V) {
+
             // toggle view with 'V'
             use3D = !use3D;
             frame.getContentPane().remove(use3D ? topdown : view3d);
             frame.getContentPane().add(use3D ? view3d : topdown, BorderLayout.CENTER);
             frame.revalidate(); frame.repaint(); frame.requestFocusInWindow();
         } else if (k == KeyEvent.VK_M) {
+
             // toggle minimap with 'M'
             showMiniMap = !showMiniMap;
             view3d.repaint();
         } else if (k == KeyEvent.VK_Q) {            // confirm quit to avoid accidental exit on startup
+
             // run later so the originating key event isn't forwarded into the dialog
             SwingUtilities.invokeLater(() -> {
                 int r = JOptionPane.showConfirmDialog(frame, "Save path and quit?", "Quit", JOptionPane.YES_NO_OPTION);
@@ -216,6 +229,7 @@ public class Maze {
         // If an animation was started, finalization happens in the timer; otherwise, record and check immediately
         if (moved && !animating) {
             view3d.repaint(); topdown.repaint();
+
             // record step
             path.add(posI + "," + posJ);
             if (solveMaze(maze, posI, posJ)) {
@@ -244,7 +258,8 @@ public class Maze {
     }
 
     static boolean solveMaze(char[][] maze, int i, int j) {
-        return maze[i][j] == 'E';
+        // Player can only exit when standing on 'E' and holding the key
+        return maze[i][j] == 'E' && hasKey;
     }
 
     // Generate a maze (single-cell passages); can optionally add loops
@@ -344,8 +359,10 @@ public class Maze {
 
         int[] start = startCandidates.get(rand.nextInt(startCandidates.size()));
         int[] exit = exitCandidates.get(rand.nextInt(exitCandidates.size()));
+
         // ensure start != exit
         if (start[0] == exit[0] && start[1] == exit[1]) {
+
             // pick a different exit if possible
             if (exitCandidates.size() > 1) {
                 int idx;
@@ -359,8 +376,10 @@ public class Maze {
 
         // Mark start (interior) and place exit on the outer border cell adjacent to the chosen exit passage
         grid[start[0]][start[1]] = 'O';
+
         // ensure the interior exit cell is a passage, then mark the outermost border cell as 'E'
         grid[exit[0]][exit[1]] = ' ';
+
         if (exit[0] == 1) {
             // exit at top border
             grid[0][exit[1]] = 'E';
@@ -378,7 +397,168 @@ public class Maze {
             grid[exit[0]][exit[1]] = 'E';
         }
         posI = start[0]; posJ = start[1];
+        
+        // Place a key randomly on a passage cell (not start, not an exit border)
+        placeKey(grid);
+        
         return grid;
+    }
+
+    // Choose a random passage cell for the key, avoiding the start position and borders
+    static void placeKey(char[][] grid) {
+        java.util.Random rand = new java.util.Random();
+        java.util.List<int[]> candidates = new java.util.ArrayList<>();
+        int rows = grid.length, cols = grid[0].length;
+        for (int r = 1; r < rows - 1; r++) {
+            for (int c = 1; c < cols - 1; c++) {
+                if (grid[r][c] == ' ' && !(r == posI && c == posJ)) {
+                    candidates.add(new int[]{r, c});
+                }
+            }
+        }
+        if (!candidates.isEmpty()) {
+            int[] chosen = candidates.get(rand.nextInt(candidates.size()));
+            keyI = chosen[0];
+            keyJ = chosen[1];
+        } else {
+            keyI = -1; keyJ = -1;
+        }
+        hasKey = false;
+    }
+
+    // Play a short key pickup sound using Java Sound (no external files)
+    static void playPickupSound() {
+        new Thread(() -> {
+            try {
+                float sampleRate = 44100f;
+                AudioFormat format = new AudioFormat(sampleRate, 16, 1, true, false);
+                DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+                SourceDataLine line = (SourceDataLine) AudioSystem.getLine(info);
+                line.open(format);
+                line.start();
+
+                int[] freqs = {900, 1500};
+                int toneMs = 8; // duration per tone
+                int gapMs = 5;  // small gap between tones
+
+                for (int f : freqs) {
+                    int samples = (int) (toneMs * sampleRate / 1000);
+                    byte[] buf = new byte[samples * 2]; // 16-bit PCM mono
+                    for (int i = 0; i < samples; i++) {
+                        double t = i / sampleRate;
+
+                        // quick attack + decay envelope for percussive feel
+                        double envAttack = Math.min(1.0, i / (samples * 0.15));
+                        double envDecay = Math.pow(1.0 - (double) i / samples, 0.7);
+                        double env = envAttack * envDecay;
+                        double v = Math.sin(2.0 * Math.PI * f * t) * env * 0.6; // amplitude
+                        short s = (short) (v * 32767);
+                        buf[i * 2] = (byte) (s & 0xFF);         // little-endian
+                        buf[i * 2 + 1] = (byte) ((s >>> 8) & 0xFF);
+                    }
+                    line.write(buf, 0, buf.length);
+
+                    // small silence gap
+                    int gapSamples = (int) (gapMs * sampleRate / 1000);
+                    byte[] gap = new byte[gapSamples * 2];
+                    line.write(gap, 0, gap.length);
+                }
+
+                line.drain();
+                line.stop();
+                line.close();
+            } catch (Exception ex) {
+                if (debug) System.err.println("Pickup sound failed: " + ex.getMessage());
+            }
+        }, "pickup-sound").start();
+    }
+
+    // Play a short exit chime when reaching the exit (no external files)
+    static void playExitSound() {
+        new Thread(() -> {
+            try {
+                float sampleRate = 44100f;
+                AudioFormat format = new AudioFormat(sampleRate, 16, 1, true, false);
+                DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+                SourceDataLine line = (SourceDataLine) AudioSystem.getLine(info);
+                line.open(format);
+                line.start();
+
+                // Play a triad chord (three notes at once) for victory
+                int[] freqs = {700, 950, 1200};
+                int chordMs = 300; // chord duration
+
+                int samples = (int) (chordMs * sampleRate / 1000);
+                byte[] buf = new byte[samples * 2];
+                for (int i = 0; i < samples; i++) {
+                    double t = i / sampleRate;
+
+                    // Smooth envelope to avoid clicks
+                    double envAttack = Math.min(1.0, i / (samples * 0.08));
+                    double envDecay = Math.pow(1.0 - (double) i / samples, 0.85);
+                    double env = envAttack * envDecay;
+
+                    // Sum the three sines and normalize
+                    double v = 0.0;
+                    for (int f : freqs) v += Math.sin(2.0 * Math.PI * f * t);
+                    v = (v / freqs.length) * 0.8 * env; // scale to avoid clipping
+                    short s = (short) (v * 32767);
+                    buf[i * 2] = (byte) (s & 0xFF);
+                    buf[i * 2 + 1] = (byte) ((s >>> 8) & 0xFF);
+                }
+                line.write(buf, 0, buf.length);
+
+                line.drain();
+                line.stop();
+                line.close();
+            } catch (Exception ex) {
+                if (debug) System.err.println("Exit sound failed: " + ex.getMessage());
+            }
+        }, "exit-sound").start();
+    }
+
+    // Play a quiet footstep thump for each movement
+    static void playFootstepSound() {
+        new Thread(() -> {
+            try {
+                float sampleRate = 44100f;
+                AudioFormat format = new AudioFormat(sampleRate, 16, 1, true, false);
+                DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+                SourceDataLine line = (SourceDataLine) AudioSystem.getLine(info);
+                line.open(format);
+                line.start();
+
+                int ms = 40; // short thump
+                int samples = (int)(ms * sampleRate / 1000);
+                byte[] buf = new byte[samples * 2];
+                java.util.Random rnd = new java.util.Random();
+                double baseFreq = 130.0; // low tone
+                for (int i = 0; i < samples; i++) {
+                    double t = i / sampleRate;
+
+                    // Fast attack, exponential decay envelope
+                    double envAttack = Math.min(1.0, i / (samples * 0.08));
+                    double envDecay = Math.pow(1.0 - (double)i / samples, 1.4);
+                    double env = envAttack * envDecay;
+
+                    // Low sine + a touch of noise
+                    double sine = Math.sin(2.0 * Math.PI * baseFreq * t);
+                    double noise = (rnd.nextDouble() * 2.0 - 1.0) * 0.15;
+
+                    // low volume
+                    double v = (sine * 0.35 + noise) * env * 0.25;
+                    short s = (short)(Math.max(-1.0, Math.min(1.0, v)) * 32767);
+                    buf[i*2] = (byte)(s & 0xFF);
+                    buf[i*2 + 1] = (byte)((s >>> 8) & 0xFF);
+                }
+                line.write(buf, 0, buf.length);
+                line.drain();
+                line.stop();
+                line.close();
+            } catch (Exception ex) {
+                if (debug) System.err.println("Footstep sound failed: " + ex.getMessage());
+            }
+        }, "footstep-sound").start();
     }
 
     // 3D first-person view panel
@@ -397,8 +577,6 @@ public class Maze {
             repaint();
         }
 
-        char[][] getMaze() { return maze; }
-
         @Override protected void paintComponent(Graphics g0) {
             super.paintComponent(g0);
             Graphics2D g = (Graphics2D) g0.create();
@@ -408,6 +586,7 @@ public class Maze {
             // sky / ceiling (extended to top)
             g.setColor(Color.WHITE);
             g.fillRect(0, 0, w, h/2);
+
             // floor
             g.setColor(new Color(150, 120, 80));
             g.fillRect(0, h/2, w, h/2);
@@ -422,42 +601,55 @@ public class Maze {
             
             // Draw immediate doorways if they exist
             if (!immediateLeftWall) {
+
                 // immediate left doorway - fill from screen edge to first slice
                 int firstLeft = (int) (centerX - (w/2) * 1.0 * 0.7);
                 int firstTop = (int) (h * 0.15);
                 int firstBottom = h - firstTop;
                 g.setColor(new Color(40, 40, 40));
                 g.fillPolygon(new Polygon(new int[]{0, firstLeft, firstLeft, 0}, new int[]{0, firstTop, firstBottom, h}, 4));
+
                 // Fill top triangle with white (ceiling color)
                 g.setColor(Color.WHITE);
                 g.fillPolygon(new Polygon(new int[]{0, firstLeft, 0}, new int[]{0, firstTop, firstTop}, 3));
+
                 // Fill bottom triangle with floor color
                 g.setColor(new Color(150, 120, 80));
                 g.fillPolygon(new Polygon(new int[]{0, firstLeft, 0}, new int[]{h, firstBottom, firstBottom}, 3));
+
                 // Draw lines showing the side hallway
                 g.setColor(Color.BLACK);
                 g.drawLine(firstLeft, firstTop, 0, firstTop);
                 g.drawLine(firstLeft, firstBottom, 0, firstBottom);
             }
+
             if (!immediateRightWall) {
+
                 // immediate right doorway - fill from first slice to screen edge
                 int firstRight = (int) (centerX + (w/2) * 1.0 * 0.7);
                 int firstTop = (int) (h * 0.15);
                 int firstBottom = h - firstTop;
                 g.setColor(new Color(40, 40, 40));
                 g.fillPolygon(new Polygon(new int[]{firstRight, w, w, firstRight}, new int[]{firstTop, 0, h, firstBottom}, 4));
+
                 // Fill top triangle with white (ceiling color)
                 g.setColor(Color.WHITE);
                 g.fillPolygon(new Polygon(new int[]{firstRight, w, w}, new int[]{firstTop, 0, firstTop}, 3));
+
                 // Fill bottom triangle with floor color
                 g.setColor(new Color(150, 120, 80));
                 g.fillPolygon(new Polygon(new int[]{firstRight, w, w}, new int[]{firstBottom, h, firstBottom}, 3));
+
                 // Draw lines showing the side hallway
                 g.setColor(Color.BLACK);
                 g.drawLine(firstRight, firstTop, w, firstTop);
                 g.drawLine(firstRight, firstBottom, w, firstBottom);
             }
             
+            // Defer key rendering until after walls to keep it on top
+            boolean keyShouldDraw = false;
+            int pendingKeyX = 0, pendingKeyY = 0, pendingKeySize = 0;
+
             for (int dist = 1; dist <= viewDepth; dist++) {
                 double scale = 1.0 - (double)(dist-1) / viewDepth;
                 double nextScale = 1.0 - (double)dist / viewDepth;
@@ -485,6 +677,17 @@ public class Maze {
                 int checkC = (int)Math.round(baseC + dir[1] * dist);
                 boolean frontIsExit = (checkR >= 0 && checkR < maze.length && checkC >= 0 && checkC < maze[0].length && maze[checkR][checkC] == 'E');
 
+                // Draw key when it is directly ahead in the corridor and not blocked
+                boolean keyAhead = (!hasKey && checkR == keyI && checkC == keyJ && !frontBlock);
+                if (keyAhead && !keyShouldDraw) {
+                    int sliceWidth = Math.max(1, right - left);
+                    double scaleFactor = nextScale * nextScale; // stronger shrink with distance
+                    pendingKeySize = Math.max(3, (int)Math.round(sliceWidth * 0.05 * scaleFactor));
+                    pendingKeyX = (left + right) / 2;
+                    pendingKeyY = bottom - Math.max(6, h / 50);
+                    keyShouldDraw = true;
+                }
+
                 // draw opening slice - split into ceiling (white) and floor (dark grey)
                 int mid = (top + bottom) / 2;
                 int midNext = (topNext + bottomNext) / 2;
@@ -498,6 +701,7 @@ public class Maze {
                 g.setColor(new Color(40, 40, 40));
                 Polygon floor = new Polygon(new int[] {left, right, rightNext, leftNext}, new int[] {mid, mid, midNext, midNext}, 4);
                 g.fillPolygon(floor);
+
 
                 // For first slice, draw immediate walls from screen edge if they exist
                 if (dist == 1) {
@@ -520,9 +724,10 @@ public class Maze {
                         g.fillPolygon(immRightWall);
                     }
                 }
-                
+
                 // draw left wall as solid trapezoid if wall exists
                 if (leftWall) {
+
                     // solid trapezoid: only this distance slice, from left to leftNext
                     Polygon leftWallPoly = new Polygon(
                         new int[]{left, left, leftNext, leftNext}, 
@@ -532,6 +737,7 @@ public class Maze {
                     g.setColor(new Color(80, 80, 80));
                     g.fillPolygon(leftWallPoly);
                 } else {
+
                     // doorway on left - draw dark grey opening with subtle distance-based shading
                     Polygon leftDoorway = new Polygon(
                         new int[]{left, left, leftNext, leftNext}, 
@@ -541,14 +747,18 @@ public class Maze {
                     int shadeL = (int)Math.max(20, Math.round(40 - 20.0 * ((double)dist / viewDepth)));
                     g.setColor(new Color(shadeL, shadeL, shadeL));
                     g.fillPolygon(leftDoorway);
+
                     // Fill top triangle with white (ceiling color)
                     g.setColor(Color.WHITE);
                     g.fillPolygon(new Polygon(new int[]{left, leftNext, left}, new int[]{topNext, topNext, top}, 3));
+
                     // Fill bottom triangle with floor color
                     g.setColor(new Color(150, 120, 80));
                     g.fillPolygon(new Polygon(new int[]{left, leftNext, left}, new int[]{bottomNext, bottomNext, bottom}, 3));
+
                     // Draw lines showing the side hallway ceiling/wall joint
                     g.setColor(Color.BLACK);
+
                     // Stop at current slice's near edge (where closer wall would block view)
                     g.drawLine(leftNext, topNext, left, topNext);  // top - horizontal
                     g.drawLine(leftNext, bottomNext, left, bottomNext);  // bottom
@@ -556,6 +766,7 @@ public class Maze {
                 
                 // draw right wall as solid trapezoid if wall exists
                 if (rightWall) {
+
                     // solid trapezoid: only this distance slice, from right to rightNext
                     Polygon rightWallPoly = new Polygon(
                         new int[]{right, right, rightNext, rightNext}, 
@@ -565,6 +776,7 @@ public class Maze {
                     g.setColor(new Color(80, 80, 80));
                     g.fillPolygon(rightWallPoly);
                 } else {
+
                     // doorway on right - draw dark grey opening with subtle distance-based shading
                     Polygon rightDoorway = new Polygon(
                         new int[]{right, right, rightNext, rightNext}, 
@@ -574,23 +786,31 @@ public class Maze {
                     int shadeR = (int)Math.max(20, Math.round(40 - 20.0 * ((double)dist / viewDepth)));
                     g.setColor(new Color(shadeR, shadeR, shadeR));
                     g.fillPolygon(rightDoorway);
+
                     // Fill top triangle with white (ceiling color)
                     g.setColor(Color.WHITE);
                     g.fillPolygon(new Polygon(new int[]{right, rightNext, right}, new int[]{topNext, topNext, top}, 3));
+
                     // Fill bottom triangle with floor color
                     g.setColor(new Color(150, 120, 80));
                     g.fillPolygon(new Polygon(new int[]{right, rightNext, right}, new int[]{bottomNext, bottomNext, bottom}, 3));
+
                     // Draw lines showing the side hallway ceiling/wall joint
                     g.setColor(Color.BLACK);
+
                     // Stop at current slice's near edge (where closer wall would block view)
                     g.drawLine(rightNext, topNext, right, topNext);  // top - horizontal
                     g.drawLine(rightNext, bottomNext, right, bottomNext);  // bottom
                 }
+
+                // (Key drawing deferred until after the loop)
                 
                 // if front blocked or exit, draw a wall across the opening and stop deeper drawing
                 if (frontBlock || frontIsExit) {
+
                     // Use current slice dimensions to fill the opening completely
                     Polygon front = new Polygon(new int[]{left, right, right, left}, new int[]{top, top, bottom, bottom}, 4);
+
                     // Shade front wall to visually match doorway shade at the same perceived slice
                     // Doorways at this loop index effectively appear one slice nearer than the front wall
                     int effectiveDist = Math.max(0, dist - 1);
@@ -600,23 +820,46 @@ public class Maze {
                     
                     // If this is the exit, draw "Exit" text on the wall
                     if (frontIsExit) {
-                        // Draw "Exit" text on the wall
                         g.setColor(Color.RED);
                         Font oldFont = g.getFont();
-                        int fontSize = (int)((right - left) * 0.4);
-                        g.setFont(new Font("SansSerif", Font.BOLD, Math.max(12, fontSize)));
+                        int fontSize = (int)((right - left) * 0.35);
+                        int exitFontSize = Math.max(12, fontSize);
+                        g.setFont(new Font("SansSerif", Font.BOLD, exitFontSize));
                         String exitText = "Exit";
-                        FontMetrics fm = g.getFontMetrics();
-                        int textWidth = fm.stringWidth(exitText);
-                        int textHeight = fm.getAscent();
-                        int textX = (left + right) / 2 - textWidth / 2;
-                        int textY = (top + bottom) / 2 + textHeight / 2;
-                        g.drawString(exitText, textX, textY);
+                        FontMetrics fmExit = g.getFontMetrics();
+                        int exitWidth = fmExit.stringWidth(exitText);
+                        int exitAscent = fmExit.getAscent();
+                        int exitX = (left + right) / 2 - exitWidth / 2;
+                        int wallHeight = bottom - top;
+                        int verticalOffset = Math.max(6, wallHeight / 8); // move text a bit higher on the wall
+                        int exitY = (top + bottom) / 2 - verticalOffset + exitAscent / 2;
+                        g.drawString(exitText, exitX, exitY);
+
+                        // If the key hasn't been found yet, show a small "(locked)" below the Exit
+                        if (!hasKey) {
+                            String lockedText = "(locked)";
+                            int lockedFontSize = Math.max(8, exitFontSize / 5); // slightly smaller for better scaling
+                            g.setFont(new Font("SansSerif", Font.PLAIN, lockedFontSize));
+                            g.setColor(Color.BLACK);
+                            FontMetrics fmLocked = g.getFontMetrics();
+                            int lockedWidth = fmLocked.stringWidth(lockedText);
+                            int lockedAscent = fmLocked.getAscent();
+                            int lockedX = (left + right) / 2 - lockedWidth / 2;
+                            int lockedY = exitY + lockedAscent + Math.max(2, lockedFontSize / 10);
+                            g.drawString(lockedText, lockedX, lockedY);
+                        }
                         g.setFont(oldFont);
                     }
-                    
                     break;
                 }
+            }
+
+            // Draw the key after all walls (including front wall) are rendered
+            if (keyShouldDraw) {
+                g.setColor(new Color(212, 172, 55));
+                g.fillOval(pendingKeyX - pendingKeySize/2, pendingKeyY - pendingKeySize/2, pendingKeySize, pendingKeySize);
+                g.fillRect(pendingKeyX, pendingKeyY - pendingKeySize/6, pendingKeySize * 2, pendingKeySize / 3);
+                g.fillRect(pendingKeyX + pendingKeySize * 2, pendingKeyY - pendingKeySize/6, pendingKeySize / 3, pendingKeySize / 2);
             }
 
             // draw mini-map (top-left) if enabled
@@ -632,6 +875,7 @@ public class Maze {
                         g.fillRect(mmX + c*miniMapCell, mmY + r*miniMapCell, miniMapCell, miniMapCell);
                     }
                 }
+
                 // draw player on mini-map (interpolated during animation)
                 double t = getAnimationProgress();
                 double pr = animating ? (animFromI + (animToI - animFromI) * t) : posI;
@@ -640,6 +884,7 @@ public class Maze {
                 int drawX = (int)Math.round(mmX + pc*miniMapCell);
                 int drawY = (int)Math.round(mmY + pr*miniMapCell);
                 g.fillOval(drawX, drawY, miniMapCell, miniMapCell);
+
                 // draw facing arrow
                 g.setColor(Color.YELLOW);
                 int ax = (int)Math.round(mmX + pc*miniMapCell + miniMapCell/2);
@@ -648,15 +893,15 @@ public class Maze {
                 int by = ay + directions[facing][0]*miniMapCell;
                 g.drawLine(ax, ay, bx, by);
             }
-            
+
             // draw "Press Start" text overlay
             drawStartOverlay(g, w, h);
-            
             g.dispose();
         }
 
         // check if the cell at forward distance 'forward' and side -1/0/1 is a wall
         boolean isWallAt(char[][] maze, int forward, int side) {
+
             // use interpolated base position during animation for smoother rendering
             double t = getAnimationProgress();
             double baseR = animating ? (animFromI + (animToI - animFromI) * t) : posI;
@@ -684,9 +929,16 @@ public class Maze {
         if (ni < 0 || ni >= maze.length || nj < 0 || nj >= maze[0].length) {
             return false;
         }
+
+        // Block entering exit unless holding the key
+        if (maze[ni][nj] == 'E' && !hasKey) {
+            if (debug) System.out.println("Exit locked: pick up the key first");
+            return false;
+        }
         if (maze[ni][nj] == '#') {
             return false;
         }
+
         // start animation from current pos to target
         animFromI = posI; animFromJ = posJ; animToI = ni; animToJ = nj;
         animStartTime = System.currentTimeMillis();
@@ -698,6 +950,7 @@ public class Maze {
                 if (t >= 1.0) {
                     animTimer.stop();
                     animating = false;
+
                     // Use currentMaze to avoid stale captured references after regeneration
                     finalizeMove(currentMaze);
                 } else {
@@ -707,6 +960,9 @@ public class Maze {
             animTimer.setRepeats(true);
         }
         animTimer.start();
+
+        // Play quiet footstep when movement starts
+        playFootstepSound();
         return true;
     }
 
@@ -721,17 +977,28 @@ public class Maze {
     }
 
     static void finalizeMove(char[][] maze) {
+
         // clear old position unless it is the exit
         if (maze[animFromI][animFromJ] != 'E') maze[animFromI][animFromJ] = ' ';
         posI = animToI; posJ = animToJ;
+
+        // Pick up key only when entering its tile in 3D view
+        if (!hasKey && use3D && posI == keyI && posJ == keyJ) {
+            hasKey = true;
+            keyI = -1; keyJ = -1; // remove key from world
+            playPickupSound();
+        }
+
         // Check if we reached the exit BEFORE overwriting the cell
         boolean reachedExit = solveMaze(maze, posI, posJ);
         if (maze[posI][posJ] != 'E') maze[posI][posJ] = 'O';
         view3d.repaint(); topdown.repaint();
+
         // record step
         path.add(posI + "," + posJ);
         if (reachedExit) {
             SwingUtilities.invokeLater(() -> {
+                playExitSound();
                 view3d.repaint(); topdown.repaint();
                 JOptionPane.showMessageDialog(frame, "Exit found!");
                 savePathAndExit();
@@ -760,8 +1027,6 @@ public class Maze {
             revalidate();
             repaint();
         }
-
-        char[][] getMaze() { return maze; }
 
         @Override protected void paintComponent(Graphics g0) {
             super.paintComponent(g0);
@@ -797,6 +1062,7 @@ public class Maze {
             int py = (int)Math.round(pr * cellSize);
             g.setColor(Color.YELLOW);
             g.fillOval(px + cellSize/4, py + cellSize/4, cellSize/2, cellSize/2);
+
             // facing arrow
             g.setColor(Color.BLUE);
             int ax = px + cellSize/2;
@@ -809,9 +1075,7 @@ public class Maze {
             int w = getWidth();
             int h = getHeight();
             drawStartOverlay(g, w, h);
-
             g.dispose();
         }
     }
-
 }
