@@ -10,6 +10,10 @@ import java.util.List;
 import javax.sound.sampled.*;
 
 public class Maze {
+    // Multi-floor state (3 floors: 0,1,2)
+    static char[][][] floors;
+    static int currentFloor = 0;
+
     static int posI = 9; // Starting I position
     static int posJ = 1; // Starting J position
     static int directions[][] = {{-1, 0}, {0, 1}, {1, 0}, {0, -1}}; // Up, Right, Down, Left
@@ -28,6 +32,7 @@ public class Maze {
     static boolean showStartText = true; // show "Press Start" overlay
     static boolean debug = false; // debug mode for console output
     static volatile boolean acceptingInput = false;
+
     // Track keys currently pressed to debounce auto-repeat
     static final java.util.Set<Integer> keysDown = new java.util.HashSet<>();
 
@@ -39,8 +44,15 @@ public class Maze {
     static javax.swing.Timer animTimer = null;
     
     // Key mechanics
-    static int keyI = -1, keyJ = -1; // key position (not stored in maze grid)
+    static int keyI = -1, keyJ = -1; // key position on current keyFloor (not stored in maze grid)
+    static int keyFloor = -1;        // which floor the key is on
     static boolean hasKey = false;   // whether player is holding the key
+    
+    // Ladder linkage positions
+    // ladderA: F0 -> F1 (up on F0, down on F1)
+    // ladderB: F1 -> F2 (up on F1, down on F2)
+    static int ladderA_I = -1, ladderA_J = -1;
+    static int ladderB_I = -1, ladderB_J = -1;
 
     static double getAnimationProgress() {
         if (!animating) return 0.0;
@@ -72,11 +84,12 @@ public class Maze {
 
     public static void main(String[] args) {
 
-        // generate a random maze (may include loops when allowLoops is true)
-        currentMaze = generateMaze(mazeRowsDefault, mazeColsDefault, allowLoops, loopChance);
-
-        // record initial position (set by generateMaze)
-        path.add(posI + "," + posJ);
+        // generate three floors and initialize state
+        floors = generateFloors(mazeRowsDefault, mazeColsDefault, allowLoops, loopChance);
+        currentFloor = 0;
+        currentMaze = floors[currentFloor];
+        // record initial position with floor
+        path.add(currentFloor + "," + posI + "," + posJ);
 
         if (debug) {
             System.out.println("Generated maze: " + currentMaze.length + "x" + currentMaze[0].length + " start=" + posI + "," + posJ + " cell=" + currentMaze[posI][posJ]);
@@ -124,13 +137,15 @@ public class Maze {
             JButton regenBtn = new JButton("Regenerate");
             regenBtn.addActionListener(e -> {
                 allowLoops = loopsBox.isSelected();
-                currentMaze = generateMaze(mazeRowsDefault, mazeColsDefault, allowLoops, loopChance);
+                floors = generateFloors(mazeRowsDefault, mazeColsDefault, allowLoops, loopChance);
+                currentFloor = 0;
+                currentMaze = floors[currentFloor];
                 view3d.setMaze(currentMaze);
                 topdown.setMaze(currentMaze);
                 view3d.repaint();
                 topdown.repaint();
                 path.clear();
-                path.add(posI + "," + posJ);
+                path.add(currentFloor + "," + posI + "," + posJ);
                 frame.requestFocusInWindow();
             });
             bottom.add(regenBtn);
@@ -202,9 +217,17 @@ public class Maze {
                 view3d.repaint(); topdown.repaint();
             }
         } else if (k == KeyEvent.VK_UP || k == KeyEvent.VK_W) {
-            moved = moveForward(maze);
+            if (use3D && showMiniMap) {
+                if (debug) System.out.println("Forward blocked: mini map visible");
+            } else {
+                moved = moveForward(maze);
+            }
         } else if (k == KeyEvent.VK_DOWN || k == KeyEvent.VK_S) {
-            moved = moveBackward(maze);
+            if (use3D && showMiniMap) {
+                if (debug) System.out.println("Backward blocked: mini map visible");
+            } else {
+                moved = moveBackward(maze);
+            }
         } else if (k == KeyEvent.VK_V) {
 
             // toggle view with 'V'
@@ -224,6 +247,32 @@ public class Maze {
                 int r = JOptionPane.showConfirmDialog(frame, "Save path and quit?", "Quit", JOptionPane.YES_NO_OPTION);
                 if (r == JOptionPane.YES_OPTION) savePathAndExit();
             });
+        } else if (k == KeyEvent.VK_U) {
+            // Go up only if standing on an up-ladder
+            if (!animating && currentMaze[posI][posJ] == 'U') {
+                if (currentFloor < 2) {
+                    currentFloor += 1;
+                    currentMaze = floors[currentFloor];
+                    view3d.setMaze(currentMaze);
+                    topdown.setMaze(currentMaze);
+                    view3d.repaint(); topdown.repaint();
+                    path.add(currentFloor + "," + posI + "," + posJ);
+                    frame.requestFocusInWindow();
+                }
+            }
+        } else if (k == KeyEvent.VK_N) {
+            // Go down only if standing on a down-ladder
+            if (!animating && currentMaze[posI][posJ] == 'D') {
+                if (currentFloor > 0) {
+                    currentFloor -= 1;
+                    currentMaze = floors[currentFloor];
+                    view3d.setMaze(currentMaze);
+                    topdown.setMaze(currentMaze);
+                    view3d.repaint(); topdown.repaint();
+                    path.add(currentFloor + "," + posI + "," + posJ);
+                    frame.requestFocusInWindow();
+                }
+            }
         }
 
         // If an animation was started, finalization happens in the timer; otherwise, record and check immediately
@@ -231,7 +280,7 @@ public class Maze {
             view3d.repaint(); topdown.repaint();
 
             // record step
-            path.add(posI + "," + posJ);
+            path.add(currentFloor + "," + posI + "," + posJ);
             if (solveMaze(maze, posI, posJ)) {
                 view3d.repaint(); topdown.repaint();
                 JOptionPane.showMessageDialog(frame, "Exit found!");
@@ -402,6 +451,93 @@ public class Maze {
         placeKey(grid);
         
         return grid;
+    }
+
+    // Generate three floors and wire ladders/exit rules
+    static char[][][] generateFloors(int rows, int cols, boolean allowLoops, double loopChance) {
+        // Base mazes
+        char[][] f1 = generateMaze(rows, cols, allowLoops, loopChance);
+        int startI = posI, startJ = posJ; // capture start from floor1
+        char[][] f2 = generateMaze(rows, cols, allowLoops, loopChance);
+        char[][] f3 = generateMaze(rows, cols, allowLoops, loopChance);
+
+        // Remove starts from floors 2/3 and any exits from floors 1/2
+        for (int i = 0; i < f1.length; i++) {
+            for (int j = 0; j < f1[0].length; j++) {
+                if (f1[i][j] == 'E') f1[i][j] = '#';
+            }
+        }
+        for (int i = 0; i < f2.length; i++) {
+            for (int j = 0; j < f2[0].length; j++) {
+                if (f2[i][j] == 'O') f2[i][j] = ' ';
+                if (f2[i][j] == 'E') f2[i][j] = '#';
+            }
+        }
+        for (int i = 0; i < f3.length; i++) {
+            for (int j = 0; j < f3[0].length; j++) {
+                if (f3[i][j] == 'O') f3[i][j] = ' ';
+            }
+        }
+
+        // Pick ladderA on floor1 (up to floor2), ensure passable on both floors
+        int[] a = pickRandomPassage(f1, startI, startJ);
+        ladderA_I = a[0]; ladderA_J = a[1];
+        f1[ladderA_I][ladderA_J] = 'U';
+        if (f2[ladderA_I][ladderA_J] == '#') f2[ladderA_I][ladderA_J] = ' ';
+        f2[ladderA_I][ladderA_J] = 'D';
+
+        // Pick ladderB on floor2 (up to floor3), distinct from ladderA, ensure passable
+        int[] b;
+        do { b = pickRandomPassage(f2, -1, -1); } while (b[0] == ladderA_I && b[1] == ladderA_J);
+        ladderB_I = b[0]; ladderB_J = b[1];
+        f2[ladderB_I][ladderB_J] = 'U';
+        if (f3[ladderB_I][ladderB_J] == '#') f3[ladderB_I][ladderB_J] = ' ';
+        f3[ladderB_I][ladderB_J] = 'D';
+
+        // Place a single key on any floor (avoid start and ladder tiles)
+        placeKeyMulti(new char[][][]{f1, f2, f3}, startI, startJ);
+
+        // Restore player start to floor1
+        posI = startI; posJ = startJ;
+        hasKey = false;
+        return new char[][][]{f1, f2, f3};
+    }
+
+    // Helper: pick random passage cell (not equal to exclude if provided)
+    static int[] pickRandomPassage(char[][] grid, int excludeI, int excludeJ) {
+        java.util.Random rand = new java.util.Random();
+        java.util.List<int[]> candidates = new java.util.ArrayList<>();
+        for (int r = 1; r < grid.length - 1; r++) {
+            for (int c = 1; c < grid[0].length - 1; c++) {
+                if (grid[r][c] == ' ' && !(r == excludeI && c == excludeJ)) {
+                    candidates.add(new int[]{r, c});
+                }
+            }
+        }
+        if (candidates.isEmpty()) return new int[]{1,1};
+        return candidates.get(rand.nextInt(candidates.size()));
+    }
+
+    // Place key across floors; avoid start and ladder tiles
+    static void placeKeyMulti(char[][][] fs, int startI, int startJ) {
+        java.util.Random rand = new java.util.Random();
+        keyFloor = rand.nextInt(3);
+        char[][] grid = fs[keyFloor];
+        java.util.List<int[]> candidates = new java.util.ArrayList<>();
+        for (int r = 1; r < grid.length - 1; r++) {
+            for (int c = 1; c < grid[0].length - 1; c++) {
+                char ch = grid[r][c];
+                boolean isLadder = (ch == 'U' || ch == 'D');
+                if (ch == ' ' && !(keyFloor == 0 && r == startI && c == startJ) && !isLadder) {
+                    candidates.add(new int[]{r, c});
+                }
+            }
+        }
+        if (!candidates.isEmpty()) {
+            int[] chosen = candidates.get(rand.nextInt(candidates.size()));
+            keyI = chosen[0]; keyJ = chosen[1];
+        } else { keyI = -1; keyJ = -1; }
+        hasKey = false;
     }
 
     // Choose a random passage cell for the key, avoiding the start position and borders
@@ -646,9 +782,13 @@ public class Maze {
                 g.drawLine(firstRight, firstBottom, w, firstBottom);
             }
             
-            // Defer key rendering until after walls to keep it on top
+            // Defer key and ladder rendering until after walls to keep them on top
             boolean keyShouldDraw = false;
             int pendingKeyX = 0, pendingKeyY = 0, pendingKeySize = 0;
+            boolean upLadderShouldDraw = false;
+            int upRailLeft = 0, upRailRight = 0, upTop = 0, upBottom = 0, upRungCount = 0;
+            boolean downLadderShouldDraw = false;
+            int downCx = 0, downCy = 0, downSize = 0;
 
             for (int dist = 1; dist <= viewDepth; dist++) {
                 double scale = 1.0 - (double)(dist-1) / viewDepth;
@@ -676,9 +816,11 @@ public class Maze {
                 int checkR = (int)Math.round(baseR + dir[0] * dist);
                 int checkC = (int)Math.round(baseC + dir[1] * dist);
                 boolean frontIsExit = (checkR >= 0 && checkR < maze.length && checkC >= 0 && checkC < maze[0].length && maze[checkR][checkC] == 'E');
+                boolean frontIsUpLadder = (checkR >= 0 && checkR < maze.length && checkC >= 0 && checkC < maze[0].length && maze[checkR][checkC] == 'U');
+                boolean frontIsDownLadder = (checkR >= 0 && checkR < maze.length && checkC >= 0 && checkC < maze[0].length && maze[checkR][checkC] == 'D');
 
                 // Draw key when it is directly ahead in the corridor and not blocked
-                boolean keyAhead = (!hasKey && checkR == keyI && checkC == keyJ && !frontBlock);
+                boolean keyAhead = (!hasKey && currentFloor == keyFloor && checkR == keyI && checkC == keyJ && !frontBlock);
                 if (keyAhead && !keyShouldDraw) {
                     int sliceWidth = Math.max(1, right - left);
                     double scaleFactor = nextScale * nextScale; // stronger shrink with distance
@@ -701,6 +843,27 @@ public class Maze {
                 g.setColor(new Color(40, 40, 40));
                 Polygon floor = new Polygon(new int[] {left, right, rightNext, leftNext}, new int[] {mid, mid, midNext, midNext}, 4);
                 g.fillPolygon(floor);
+
+                // Capture ladder geometry to draw later (after back wall), only if not blocked
+                if (!frontBlock && frontIsUpLadder && !upLadderShouldDraw) {
+                    int sliceWidth = Math.max(1, right - left);
+                    int railOffset = Math.max(2, (int)Math.round(sliceWidth * 0.06));
+                    int cx = (left + right) / 2;
+                    upRailLeft = cx - railOffset;
+                    upRailRight = cx + railOffset;
+                    upTop = topNext; upBottom = bottomNext;
+                    // Keep rung count constant; spacing naturally tightens as slice height shrinks with distance
+                    upRungCount = 6;
+                    upLadderShouldDraw = true;
+                }
+
+                if (!frontBlock && frontIsDownLadder && !downLadderShouldDraw) {
+                    int sliceWidth = Math.max(1, right - left);
+                    downSize = Math.max(6, (int)Math.round(sliceWidth * 0.18 * nextScale));
+                    downCx = (left + right) / 2;
+                    downCy = bottomNext - Math.max(6, (int)Math.round((bottomNext - midNext) * 0.2));
+                    downLadderShouldDraw = true;
+                }
 
 
                 // For first slice, draw immediate walls from screen edge if they exist
@@ -854,12 +1017,37 @@ public class Maze {
                 }
             }
 
-            // Draw the key after all walls (including front wall) are rendered
+            // Draw the key after walls but before ladders, with subtle alpha if a ladder is present
             if (keyShouldDraw) {
+                java.awt.Composite oldComp = g.getComposite();
+                boolean ladderPresent = upLadderShouldDraw || downLadderShouldDraw;
+                if (ladderPresent) {
+                    g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.82f));
+                }
                 g.setColor(new Color(212, 172, 55));
                 g.fillOval(pendingKeyX - pendingKeySize/2, pendingKeyY - pendingKeySize/2, pendingKeySize, pendingKeySize);
                 g.fillRect(pendingKeyX, pendingKeyY - pendingKeySize/6, pendingKeySize * 2, pendingKeySize / 3);
                 g.fillRect(pendingKeyX + pendingKeySize * 2, pendingKeyY - pendingKeySize/6, pendingKeySize / 3, pendingKeySize / 2);
+                if (ladderPresent) g.setComposite(oldComp);
+            }
+
+            // Draw ladders after walls and key so they overlay key and back wall
+            if (upLadderShouldDraw) {
+                g.setColor(new Color(180, 140, 60));
+                // Double the rail thickness from 3px to 6px
+                g.fillRect(upRailLeft - 3, upTop, 6, upBottom - upTop);
+                g.fillRect(upRailRight - 3, upTop, 6, upBottom - upTop);
+                for (int r = 0; r < upRungCount; r++) {
+                    int y = upTop + (int)Math.round((double)r / (Math.max(1, upRungCount - 1)) * (upBottom - upTop));
+                    g.fillRect(upRailLeft, y, upRailRight - upRailLeft, 2);
+                }
+            }
+
+            if (downLadderShouldDraw) {
+                g.setColor(new Color(100, 80, 60));
+                g.fillRect(downCx - downSize/2, downCy - downSize/2, downSize, downSize);
+                g.setColor(Color.BLACK);
+                g.drawRect(downCx - downSize/2, downCy - downSize/2, downSize, downSize);
             }
 
             // draw mini-map (top-left) if enabled
@@ -871,6 +1059,8 @@ public class Maze {
                         char ch = maze[r][c];
                         if (ch == '#') g.setColor(Color.DARK_GRAY);
                         else if (ch == 'E') g.setColor(Color.RED);
+                        else if (ch == 'U') g.setColor(new Color(0, 180, 255));
+                        else if (ch == 'D') g.setColor(new Color(180, 0, 255));
                         else g.setColor(Color.LIGHT_GRAY);
                         g.fillRect(mmX + c*miniMapCell, mmY + r*miniMapCell, miniMapCell, miniMapCell);
                     }
@@ -978,12 +1168,15 @@ public class Maze {
 
     static void finalizeMove(char[][] maze) {
 
-        // clear old position unless it is the exit
-        if (maze[animFromI][animFromJ] != 'E') maze[animFromI][animFromJ] = ' ';
+        // clear old position unless it is a special tile (preserve ladders and exit)
+        char oldCh = maze[animFromI][animFromJ];
+        if (oldCh != 'E' && oldCh != 'U' && oldCh != 'D') {
+            maze[animFromI][animFromJ] = ' ';
+        }
         posI = animToI; posJ = animToJ;
 
-        // Pick up key only when entering its tile in 3D view
-        if (!hasKey && use3D && posI == keyI && posJ == keyJ) {
+        // Pick up key only when entering its tile in 3D view and on the correct floor
+        if (!hasKey && use3D && currentFloor == keyFloor && posI == keyI && posJ == keyJ) {
             hasKey = true;
             keyI = -1; keyJ = -1; // remove key from world
             playPickupSound();
@@ -991,11 +1184,15 @@ public class Maze {
 
         // Check if we reached the exit BEFORE overwriting the cell
         boolean reachedExit = solveMaze(maze, posI, posJ);
-        if (maze[posI][posJ] != 'E') maze[posI][posJ] = 'O';
+        // do not overwrite ladders or exit with 'O'
+        char newCh = maze[posI][posJ];
+        if (newCh != 'E' && newCh != 'U' && newCh != 'D') {
+            maze[posI][posJ] = 'O';
+        }
         view3d.repaint(); topdown.repaint();
 
         // record step
-        path.add(posI + "," + posJ);
+        path.add(currentFloor + "," + posI + "," + posJ);
         if (reachedExit) {
             SwingUtilities.invokeLater(() -> {
                 playExitSound();
@@ -1044,6 +1241,12 @@ public class Maze {
                         g.fillRect(x, y, cellSize, cellSize);
                     } else if (c == 'E') {
                         g.setColor(Color.RED);
+                        g.fillRect(x, y, cellSize, cellSize);
+                    } else if (c == 'U') {
+                        g.setColor(new Color(0, 180, 255));
+                        g.fillRect(x, y, cellSize, cellSize);
+                    } else if (c == 'D') {
+                        g.setColor(new Color(180, 0, 255));
                         g.fillRect(x, y, cellSize, cellSize);
                     } else {
                         g.setColor(Color.LIGHT_GRAY);
