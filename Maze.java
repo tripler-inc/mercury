@@ -258,6 +258,7 @@ public class Maze {
                     view3d.repaint(); topdown.repaint();
                     path.add(currentFloor + "," + posI + "," + posJ);
                     frame.requestFocusInWindow();
+                    playLadderUpSound();
                 }
             }
         } else if (k == KeyEvent.VK_N) {
@@ -271,6 +272,7 @@ public class Maze {
                     view3d.repaint(); topdown.repaint();
                     path.add(currentFloor + "," + posI + "," + posJ);
                     frame.requestFocusInWindow();
+                    playLadderDownSound();
                 }
             }
         }
@@ -653,6 +655,94 @@ public class Maze {
         }, "exit-sound").start();
     }
 
+    // Play short ladder-up sound: low C then C# in quick succession
+    static void playLadderUpSound() {
+        new Thread(() -> {
+            try {
+                float sampleRate = 44100f;
+                AudioFormat format = new AudioFormat(sampleRate, 16, 1, true, false);
+                DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+                SourceDataLine line = (SourceDataLine) AudioSystem.getLine(info);
+                line.open(format);
+                line.start();
+
+                double[] freqs = {130.81, 138.59}; // C3 and C#3
+                int toneMs = 60; // short duration per tone
+                int gapMs = 6;   // small gap between tones
+
+                for (double f : freqs) {
+                    int samples = (int) (toneMs * sampleRate / 1000);
+                    byte[] buf = new byte[samples * 2];
+                    for (int i = 0; i < samples; i++) {
+                        double t = i / sampleRate;
+                        double envAttack = Math.min(1.0, i / (samples * 0.12));
+                        double envDecay = Math.pow(1.0 - (double) i / samples, 0.8);
+                        double env = envAttack * envDecay;
+                        double v = Math.sin(2.0 * Math.PI * f * t) * env * 0.6;
+                        short s = (short) (v * 32767);
+                        buf[i * 2] = (byte) (s & 0xFF);
+                        buf[i * 2 + 1] = (byte) ((s >>> 8) & 0xFF);
+                    }
+                    line.write(buf, 0, buf.length);
+
+                    int gapSamples = (int) (gapMs * sampleRate / 1000);
+                    byte[] gap = new byte[gapSamples * 2];
+                    line.write(gap, 0, gap.length);
+                }
+
+                line.drain();
+                line.stop();
+                line.close();
+            } catch (Exception ex) {
+                if (debug) System.err.println("Ladder-up sound failed: " + ex.getMessage());
+            }
+        }, "ladder-up-sound").start();
+    }
+
+    // Play short ladder-down sound: C# then C in quick succession
+    static void playLadderDownSound() {
+        new Thread(() -> {
+            try {
+                float sampleRate = 44100f;
+                AudioFormat format = new AudioFormat(sampleRate, 16, 1, true, false);
+                DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+                SourceDataLine line = (SourceDataLine) AudioSystem.getLine(info);
+                line.open(format);
+                line.start();
+
+                double[] freqs = {98.00, 92.50}; // G2 then Gb2 (F#2)
+                int toneMs = 60; // short duration per tone
+                int gapMs = 6;   // small gap between tones
+
+                for (double f : freqs) {
+                    int samples = (int) (toneMs * sampleRate / 1000);
+                    byte[] buf = new byte[samples * 2];
+                    for (int i = 0; i < samples; i++) {
+                        double t = i / sampleRate;
+                        double envAttack = Math.min(1.0, i / (samples * 0.12));
+                        double envDecay = Math.pow(1.0 - (double) i / samples, 0.8);
+                        double env = envAttack * envDecay;
+                        double v = Math.sin(2.0 * Math.PI * f * t) * env * 0.6;
+                        short s = (short) (v * 32767);
+                        buf[i * 2] = (byte) (s & 0xFF);
+                        buf[i * 2 + 1] = (byte) ((s >>> 8) & 0xFF);
+                    }
+                    line.write(buf, 0, buf.length);
+
+                    int gapSamples = (int) (gapMs * sampleRate / 1000);
+                    byte[] gap = new byte[gapSamples * 2];
+                    line.write(gap, 0, gap.length);
+                }
+
+                line.drain();
+                line.stop();
+                line.close();
+            } catch (Exception ex) {
+                if (debug) System.err.println("Ladder-down sound failed: " + ex.getMessage());
+            }
+        }, "ladder-down-sound").start();
+    }
+
     // Play a quiet footstep thump for each movement
     static void playFootstepSound() {
         new Thread(() -> {
@@ -787,8 +877,9 @@ public class Maze {
             int pendingKeyX = 0, pendingKeyY = 0, pendingKeySize = 0;
             boolean upLadderShouldDraw = false;
             int upRailLeft = 0, upRailRight = 0, upTop = 0, upBottom = 0, upRungCount = 0;
+            double upLadderScale = 0.0; // capture slice scale to vary rail thickness by distance
             boolean downLadderShouldDraw = false;
-            int downCx = 0, downCy = 0, downSize = 0;
+            int downNearLeft = 0, downNearRight = 0, downFarLeft = 0, downFarRight = 0, downNearY = 0, downFarY = 0;
 
             for (int dist = 1; dist <= viewDepth; dist++) {
                 double scale = 1.0 - (double)(dist-1) / viewDepth;
@@ -854,14 +945,32 @@ public class Maze {
                     upTop = topNext; upBottom = bottomNext;
                     // Keep rung count constant; spacing naturally tightens as slice height shrinks with distance
                     upRungCount = 6;
+                    // Capture scale for thickness modulation (closer -> thicker, farther -> thinner)
+                    upLadderScale = nextScale;
                     upLadderShouldDraw = true;
                 }
 
                 if (!frontBlock && frontIsDownLadder && !downLadderShouldDraw) {
-                    int sliceWidth = Math.max(1, right - left);
-                    downSize = Math.max(6, (int)Math.round(sliceWidth * 0.18 * nextScale));
-                    downCx = (left + right) / 2;
-                    downCy = bottomNext - Math.max(6, (int)Math.round((bottomNext - midNext) * 0.2));
+                    // Create a centered trapezoid hole on the floor spanning one map square (inset slightly), half corridor width
+                    int inset = Math.max(2, (int)Math.round((right - left) * 0.02));
+                    int nearWidth = Math.max(1, right - left);
+                    int farWidth = Math.max(1, rightNext - leftNext);
+                    int cxNear = (left + right) / 2;
+                    int cxFar = (leftNext + rightNext) / 2;
+                    // target half-width factor
+                    double widthFactor = 0.5;
+                    int nearHalf = (int)Math.round(nearWidth * widthFactor / 2);
+                    int farHalf = (int)Math.round(farWidth * widthFactor / 2);
+                    downNearLeft = cxNear - nearHalf + inset;
+                    downNearRight = cxNear + nearHalf - inset;
+                    downFarLeft = cxFar - farHalf + inset;
+                    downFarRight = cxFar + farHalf - inset;
+                    // Position the hole down on the floor (near bottom of slice), with far edge slightly higher
+                    // Nearly touch the floor edge: use minimal fixed pixel offsets
+                    int floorInsetNear = 1; // 1px from bottom
+                    int floorInsetFar = 2;  // slightly higher far edge for depth cue
+                    downNearY = bottom - floorInsetNear;
+                    downFarY = bottomNext - floorInsetFar;
                     downLadderShouldDraw = true;
                 }
 
@@ -1034,20 +1143,27 @@ public class Maze {
             // Draw ladders after walls and key so they overlay key and back wall
             if (upLadderShouldDraw) {
                 g.setColor(new Color(180, 140, 60));
-                // Double the rail thickness from 3px to 6px
-                g.fillRect(upRailLeft - 3, upTop, 6, upBottom - upTop);
-                g.fillRect(upRailRight - 3, upTop, 6, upBottom - upTop);
-                for (int r = 0; r < upRungCount; r++) {
+                // Vary rail thickness by distance: closer slices thicker, farther thinner
+                int minThick = 3;
+                int maxThick = 8;
+                int railThick = Math.max(2, (int)Math.round(minThick + (maxThick - minThick) * upLadderScale));
+                int halfT = Math.max(1, railThick / 2);
+                g.fillRect(upRailLeft - halfT, upTop, railThick, upBottom - upTop);
+                g.fillRect(upRailRight - halfT, upTop, railThick, upBottom - upTop);
+                for (int r = 1; r < upRungCount - 1; r++) {
                     int y = upTop + (int)Math.round((double)r / (Math.max(1, upRungCount - 1)) * (upBottom - upTop));
                     g.fillRect(upRailLeft, y, upRailRight - upRailLeft, 2);
                 }
             }
 
             if (downLadderShouldDraw) {
-                g.setColor(new Color(100, 80, 60));
-                g.fillRect(downCx - downSize/2, downCy - downSize/2, downSize, downSize);
+                // Draw a dark trapezoid hole aligned with the floor slice
+                int[] xPts = new int[] { downNearLeft, downNearRight, downFarRight, downFarLeft };
+                int[] yPts = new int[] { downNearY, downNearY, downFarY, downFarY };
+                g.setColor(new Color(70, 50, 40));
+                g.fillPolygon(xPts, yPts, 4);
                 g.setColor(Color.BLACK);
-                g.drawRect(downCx - downSize/2, downCy - downSize/2, downSize, downSize);
+                g.drawPolygon(xPts, yPts, 4);
             }
 
             // draw mini-map (top-left) if enabled
